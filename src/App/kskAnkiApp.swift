@@ -11,3 +11,15 @@ public struct kskAnkiAppView: View {
         DeckListView(store: deckStore)
     }
 }
+
+#if !SWIFT_PACKAGE
+@available(iOS 17.0, macOS 14.0, *)
+@main
+struct kskAnkiApp: App {
+    var body: some Scene {
+        WindowGroup {
+            kskAnkiAppView()
+        }
+    }
+}
+#endif
