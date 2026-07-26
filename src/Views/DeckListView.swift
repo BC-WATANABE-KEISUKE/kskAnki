@@ -127,24 +127,44 @@ public struct DeckListView: View {
                 }
                 .sheet(item: $selectedCourseForDetail) { course in
                     if let latestCourse = store.courses.first(where: { $0.id == course.id }) {
-                        CourseDetailView(course: latestCourse) { updatedCourse in
-                            store.updateCourse(updatedCourse)
-                        }
+                        CourseDetailView(
+                            course: latestCourse,
+                            onRecordRating: { cardId, rating in
+                                store.recordStudy(cardId: cardId, rating: rating)
+                            },
+                            onSaveCourse: { updatedCourse in
+                                store.updateCourse(updatedCourse)
+                            }
+                        )
                     }
                 }
             #if os(iOS)
             .fullScreenCover(item: $selectedDeckForStudy) { deck in
-                CardStudyView(deck: deck) { sessionCards, shouldSave in
-                    guard shouldSave else { return }
-                    sessionCards.forEach { store.updateCard($0, inDeckId: deck.id) }
-                }
+                CardStudyView(
+                    deck: deck,
+                    onRecordRating: { cardId, rating in
+                        store.recordStudy(cardId: cardId, rating: rating)
+                    },
+                    onFinishSession: { sessionCards, ratings, shouldSave in
+                        guard shouldSave else { return }
+                        // NEW-05: 保存処理を1回のみに集約する一括更新呼び出し
+                        store.updateCardsInDeckBulk(sessionCards, inDeckId: deck.id)
+                    }
+                )
             }
             #else
             .sheet(item: $selectedDeckForStudy) { deck in
-                CardStudyView(deck: deck) { sessionCards, shouldSave in
-                    guard shouldSave else { return }
-                    sessionCards.forEach { store.updateCard($0, inDeckId: deck.id) }
-                }
+                CardStudyView(
+                    deck: deck,
+                    onRecordRating: { cardId, rating in
+                        store.recordStudy(cardId: cardId, rating: rating)
+                    },
+                    onFinishSession: { sessionCards, ratings, shouldSave in
+                        guard shouldSave else { return }
+                        // NEW-05: 保存処理を1回のみに集約する一括更新呼び出し
+                        store.updateCardsInDeckBulk(sessionCards, inDeckId: deck.id)
+                    }
+                )
             }
             #endif
         }

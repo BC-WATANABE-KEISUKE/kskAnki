@@ -20,9 +20,15 @@ public struct CourseDetailView: View {
     
     @Environment(\.dismiss) private var dismiss
     public let onSaveCourse: (Course) -> Void
+    public let onRecordRating: (UUID, Rating) -> Void
     
-    public init(course: Course, onSaveCourse: @escaping (Course) -> Void) {
+    public init(
+        course: Course,
+        onRecordRating: @escaping (UUID, Rating) -> Void = { _, _ in },
+        onSaveCourse: @escaping (Course) -> Void
+    ) {
         self._course = State(initialValue: course)
+        self.onRecordRating = onRecordRating
         self.onSaveCourse = onSaveCourse
     }
     
@@ -84,23 +90,35 @@ public struct CourseDetailView: View {
             }
             #if os(iOS)
             .fullScreenCover(item: $activeStudyDeck) { studyDeck in
-                CardStudyView(deck: studyDeck) { sessionCards, shouldSave in
-                    if shouldSave {
-                        for card in sessionCards {
-                            updateSingleCardInCourse(card)
+                CardStudyView(
+                    deck: studyDeck,
+                    onRecordRating: { cardId, rating in
+                        // NEW-02: コース経由の学習でも StudyLog をリアルタイム保存
+                        onRecordRating(cardId, rating)
+                    },
+                    onFinishSession: { sessionCards, ratings, shouldSave in
+                        if shouldSave {
+                            // NEW-05: 1セッション全体の成果をメモリ上で一括適用し、保存を1回に集約
+                            updateCardsInCourseBulk(sessionCards)
                         }
                     }
-                }
+                )
             }
             #else
             .sheet(item: $activeStudyDeck) { studyDeck in
-                CardStudyView(deck: studyDeck) { sessionCards, shouldSave in
-                    if shouldSave {
-                        for card in sessionCards {
-                            updateSingleCardInCourse(card)
+                CardStudyView(
+                    deck: studyDeck,
+                    onRecordRating: { cardId, rating in
+                        // NEW-02: コース経由の学習でも StudyLog をリアルタイム保存
+                        onRecordRating(cardId, rating)
+                    },
+                    onFinishSession: { sessionCards, ratings, shouldSave in
+                        if shouldSave {
+                            // NEW-05: 1セッション全体の成果をメモリ上で一括適用し、保存を1回に集約
+                            updateCardsInCourseBulk(sessionCards)
                         }
                     }
-                }
+                )
             }
             #endif
             .sheet(isPresented: $isAddCardSheetPresented) {
@@ -258,6 +276,29 @@ public struct CourseDetailView: View {
             cards: cachedTargetCards
         )
         activeStudyDeck = studyDeck
+    }
+    
+    // NEW-05: 複数カード成果をメモリ上で一括適用し、保存処理を1回のみに集約
+    private func updateCardsInCourseBulk(_ updatedCards: [AnkiCard]) {
+        var updatedCourse = course
+        var didModify = false
+        
+        for updatedCard in updatedCards {
+            for dIdx in updatedCourse.decks.indices {
+                if let cIdx = updatedCourse.decks[dIdx].cards.firstIndex(where: { $0.id == updatedCard.id }) {
+                    updatedCourse.decks[dIdx].cards[cIdx] = updatedCard
+                    didModify = true
+                    break
+                }
+            }
+        }
+        
+        if didModify {
+            updatedCourse.updatedAt = Date()
+            self.course = updatedCourse
+            recalculateFilteredCards()
+            onSaveCourse(updatedCourse)
+        }
     }
     
     // ARC-02 安全なカードピンポイント更新

@@ -277,9 +277,9 @@ public struct FlashcardView: View {
         }
     }
     
-    // 穴埋め表現ビュー (UI-05 VoiceOver タップヒント対応)
+    // NEW-04: 複数空欄にそれぞれ正しい頭文字を付与する穴埋めビュー
     private var clozeFrontView: some View {
-        let (maskedText, firstChar) = parseCloze(card.frontText)
+        let maskedText = maskedCloze(card.frontText, showHint: showHint)
         
         return VStack(alignment: .leading, spacing: 8) {
             Text(maskedText)
@@ -288,8 +288,8 @@ public struct FlashcardView: View {
                 .lineSpacing(6)
             
             HStack(spacing: 6) {
-                if showHint, let hint = firstChar {
-                    Text("💡 ヒント: \(hint) で始まる単語")
+                if showHint {
+                    Text("💡 ヒント: 頭文字を表示中")
                         .font(.caption)
                         .fontWeight(.bold)
                         .foregroundColor(.blue)
@@ -312,30 +312,32 @@ public struct FlashcardView: View {
         }
     }
     
-    // 穴埋めマスクのパーサー
-    private func parseCloze(_ text: String) -> (String, String?) {
-        guard let regex = try? NSRegularExpression(pattern: "\\{\\{(.+?)\\}\\}|\\[(.+?)\\]", options: []) else {
-            return (text, nil)
+    // NEW-04: 各空欄を個別に走査して正確な頭文字を付与するパーサー
+    private func maskedCloze(_ text: String, showHint: Bool) -> String {
+        guard let regex = try? NSRegularExpression(pattern: #"\{\{(.+?)\}\}"#) else { return text }
+        let ns = text as NSString
+        let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
+        
+        guard !matches.isEmpty else { return text }
+        
+        var result = ""
+        var cursor = 0
+        
+        for m in matches {
+            let prefixLength = m.range.location - cursor
+            result += ns.substring(with: NSRange(location: cursor, length: prefixLength))
+            
+            let word = ns.substring(with: m.range(at: 1))
+            if showHint, let firstChar = word.trimmingCharacters(in: .whitespacesAndNewlines).first {
+                result += "\(firstChar)[ ❓ 隠し ]"
+            } else {
+                result += "[ ❓ 隠し ]"
+            }
+            cursor = m.range.location + m.range.length
         }
-        let nsString = text as NSString
-        let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
         
-        guard let firstMatch = matches.first else {
-            return (text, nil)
-        }
-        
-        let targetRange = firstMatch.range(at: 1).location != NSNotFound ? firstMatch.range(at: 1) : firstMatch.range(at: 2)
-        let targetWord = nsString.substring(with: targetRange)
-        let firstChar = targetWord.first.map { String($0) }
-        
-        let masked: String
-        if showHint, let char = firstChar {
-            masked = regex.stringByReplacingMatches(in: text, options: [], range: NSRange(location: 0, length: nsString.length), withTemplate: "\(char)[ ❓ 隠し ]")
-        } else {
-            masked = regex.stringByReplacingMatches(in: text, options: [], range: NSRange(location: 0, length: nsString.length), withTemplate: "[ ❓ 隠し ]")
-        }
-        
-        return (masked, firstChar)
+        result += ns.substring(from: cursor)
+        return result
     }
     
     // UI-04: ローカル画像 & リモート画像の一元描画グリッド

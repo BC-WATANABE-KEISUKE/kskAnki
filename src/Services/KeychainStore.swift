@@ -22,7 +22,7 @@ public struct KeychainStore: Sendable {
         
         var newQuery = query
         newQuery[kSecValueData as String] = data
-        newQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        newQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         
         let status = SecItemAdd(newQuery as CFDictionary, nil)
         return status == errSecSuccess

@@ -37,29 +37,30 @@ public final class DeckStore {
     // 日次学習目標プロパティ
     public var dailyGoalCardsCount: Int = 20
     
-    // ARC-04: 本日の学習枚数をログから動的算出
-    public var todayStudiedCardsCount: Int {
-        let calendar = Calendar.current
-        return studyLogs.filter { calendar.isDateInToday($0.studiedAt) }.count
-    }
+    // PERF-02: 本日の学習枚数 & ストリーク数をキャッシュ保持 (トップ画面カクツキ 54ms を解消)
+    public private(set) var todayStudiedCardsCount: Int = 0
+    public private(set) var streakDaysCount: Int = 0
     
-    // ARC-04: 連続学習日数 (ストリーク) をログから動的計算
-    public var streakDaysCount: Int {
-        guard !studyLogs.isEmpty else { return 0 }
+    // PERF-02: メトリクスの再計算・更新処理
+    public func recalculateMetrics() {
         let calendar = Calendar.current
+        self.todayStudiedCardsCount = studyLogs.filter { calendar.isDateInToday($0.studiedAt) }.count
         
-        // 学習日（時刻切り捨て）のユニーク集合を取得
+        guard !studyLogs.isEmpty else {
+            self.streakDaysCount = 0
+            return
+        }
+        
         let studyDates = Set(studyLogs.map { calendar.startOfDay(for: $0.studiedAt) })
-        
         var streak = 0
         var checkDate = calendar.startOfDay(for: Date())
         
-        // 今日学習していない場合、昨日学習していればストリーク継続中とみなす
         if !studyDates.contains(checkDate) {
             if let yesterday = calendar.date(byAdding: .day, value: -1, to: checkDate), studyDates.contains(yesterday) {
                 checkDate = yesterday
             } else {
-                return 0
+                self.streakDaysCount = 0
+                return
             }
         }
         
@@ -69,12 +70,17 @@ public final class DeckStore {
             checkDate = previousDay
         }
         
-        return streak
+        self.streakDaysCount = streak
     }
     
     // 全コースから集計導出される全デッキ一覧 (ARC-01 一元化)
     public var allDecks: [AnkiDeck] {
         courses.flatMap(\.decks)
+    }
+    
+    // 全コース・デッキに含まれる総カード数
+    public var allCardsCount: Int {
+        allDecks.reduce(0) { $0 + $1.cards.count }
     }
     
     private let saveFileURL: URL = {
@@ -89,26 +95,39 @@ public final class DeckStore {
             self.courses = courses.isEmpty ? DeckStore.sampleCourses(folders: self.folders) : courses
             saveToDisk()
         }
+        recalculateMetrics()
     }
     
-    // --- ディスク永続化 (BLK-03 / ARC-03 / DEV-04: os.Logger) ---
+    // --- ディスク永続化 (PERF-03: メインスレッドをブロックしないバックグラウンド非同期保存 & 同期保存オプション) ---
     @discardableResult
-    public func saveToDisk() -> Bool {
+    public func saveToDisk(sync: Bool = false) -> Bool {
         let snapshot = DeckStoreSnapshot(
             folders: folders,
             courses: courses,
             studyLogs: studyLogs,
             dailyGoalCardsCount: dailyGoalCardsCount
         )
-        do {
-            let data = try JSONEncoder().encode(snapshot)
-            // SEC-03: completeFileProtection オプションでデバイス暗号化保護を適用
-            try data.write(to: saveFileURL, options: [.atomic, .completeFileProtection])
-            return true
-        } catch {
-            logger.error("Failed to save DeckStore to disk: \(error.localizedDescription)")
-            return false
+        let targetURL = saveFileURL
+        
+        if sync {
+            do {
+                let data = try JSONEncoder().encode(snapshot)
+                try data.write(to: targetURL, options: [.atomic, .completeFileProtection])
+            } catch {
+                logger.error("Failed to save DeckStore to disk: \(error.localizedDescription)")
+            }
+        } else {
+            Task.detached(priority: .utility) {
+                do {
+                    let data = try JSONEncoder().encode(snapshot)
+                    // SEC-03: completeFileProtection オプションでデバイス暗号化保護を適用
+                    try data.write(to: targetURL, options: [.atomic, .completeFileProtection])
+                } catch {
+                    logger.error("Failed to save DeckStore to disk: \(error.localizedDescription)")
+                }
+            }
         }
+        return true
     }
     
     @discardableResult
@@ -175,6 +194,36 @@ public final class DeckStore {
         }
     }
     
+    // NEW-02: 明示的な学習ログ記録 API (コース学習 & マイ単語帳学習共通)
+    public func recordStudy(cardId: UUID, rating: Rating, at date: Date = Date()) {
+        let log = StudyLog(cardId: cardId, rating: rating, studiedAt: date)
+        studyLogs.append(log)
+        recalculateMetrics()
+        saveToDisk()
+    }
+    
+    // NEW-05: 1セッションの複数カード成果を一括反映し、ディスク保存を1回に集約
+    public func updateCardsInDeckBulk(_ updatedCards: [AnkiCard], inDeckId: UUID) {
+        var didModify = false
+        for cIdx in courses.indices {
+            for dIdx in courses[cIdx].decks.indices {
+                if courses[cIdx].decks[dIdx].id == inDeckId {
+                    for card in updatedCards {
+                        if let cardIdx = courses[cIdx].decks[dIdx].cards.firstIndex(where: { $0.id == card.id }) {
+                            courses[cIdx].decks[dIdx].cards[cardIdx] = card
+                            didModify = true
+                        }
+                    }
+                    if didModify {
+                        courses[cIdx].updatedAt = Date()
+                        saveToDisk() // 1セッション全体の更新に対して最後に1回だけ保存
+                        return
+                    }
+                }
+            }
+        }
+    }
+    
     public func updateCard(_ card: AnkiCard, inDeckId deckId: UUID) {
         for cIdx in courses.indices {
             for dIdx in courses[cIdx].decks.indices {
@@ -182,11 +231,6 @@ public final class DeckStore {
                     if let cardIdx = courses[cIdx].decks[dIdx].cards.firstIndex(where: { $0.id == card.id }) {
                         courses[cIdx].decks[dIdx].cards[cardIdx] = card
                         courses[cIdx].updatedAt = Date()
-                        
-                        // ARC-04: 学習ログの追加
-                        let log = StudyLog(cardId: card.id, rating: card.lastRating ?? .correct, studiedAt: Date())
-                        studyLogs.append(log)
-                        
                         saveToDisk()
                         return
                     }

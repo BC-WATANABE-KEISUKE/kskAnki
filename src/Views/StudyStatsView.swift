@@ -1,70 +1,45 @@
 import SwiftUI
 
-/// 暗記学習の統計ダッシュボード画面 (FEAT-02: 過去7日間の学習数・理解度内訳の可視化)
+/// 日別統計用モデル (PERF-01 高速化)
+public struct DailyStatItem: Identifiable, Sendable {
+    public let id = UUID()
+    public let date: Date
+    public let label: String
+    public let count: Int
+}
+
+/// 学習成果・グラフィック統計ダッシュボード (FEAT-02, PERF-01 最適化)
 @available(iOS 17.0, macOS 14.0, *)
 public struct StudyStatsView: View {
     @Environment(\.dismiss) private var dismiss
     public let store: DeckStore
     
+    // PERF-01: キャッシュ保持ステート (1.04秒フリーズ解消)
+    @State private var cachedLast7DaysStats: [DailyStatItem] = []
+    @State private var cachedMaxDailyCount: Int = 1
+    @State private var cachedRatingCounts: (correct: Int, doubtful: Int, incorrect: Int) = (0, 0, 0)
+    
     public init(store: DeckStore) {
         self.store = store
-    }
-    
-    private var calendar: Calendar { Calendar.current }
-    
-    // 過去7日間の日付と学習枚数の配列
-    private var last7DaysStats: [(date: Date, label: String, count: Int)] {
-        let today = calendar.startOfDay(for: Date())
-        var results: [(Date, String, Int)] = []
-        
-        let formatter = DateFormatter()
-        formatter.dateFormat = "M/d(eee)"
-        formatter.locale = Locale(identifier: "ja_JP")
-        
-        for i in (0..<7).reversed() {
-            if let date = calendar.date(byAdding: .day, value: -i, to: today) {
-                let count = store.studyLogs.filter { calendar.isDate($0.studiedAt, inSameDayAs: date) }.count
-                let label = i == 0 ? "今日" : formatter.string(from: date)
-                results.append((date, label, count))
-            }
-        }
-        return results
-    }
-    
-    // 判定別の割合
-    private var ratingCounts: (correct: Int, doubtful: Int, incorrect: Int) {
-        var c = 0, d = 0, i = 0
-        for log in store.studyLogs {
-            switch log.rating {
-            case .correct: c += 1
-            case .doubtful: d += 1
-            case .incorrect: i += 1
-            }
-        }
-        return (c, d, i)
-    }
-    
-    private var maxDailyCount: Int {
-        max(1, last7DaysStats.map(\.count).max() ?? 1)
     }
     
     public var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
-                    // 1. サマリー指標グリッド
-                    summaryGrid
+                    // 1. サマリーメトリクスカード (連続日数 & 本日枚数 & 総カード数)
+                    summaryMetricsCard
                     
-                    // 2. 過去7日間の学習推移グラフ (バーチャート)
+                    // 2. 過去7日間の縦棒グラフ
                     weeklyChartCard
                     
-                    // 3. 理解度内訳 (◯ / △ / ✕)
+                    // 3. 理解度判定の割合
                     ratingBreakdownCard
                 }
-                .padding(20)
+                .padding(16)
             }
-            .background(backgroundColor)
-            .navigationTitle("学習統計 & 分析")
+            .background(backgroundColor.ignoresSafeArea())
+            .navigationTitle("学習統計ダッシュボード")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -73,64 +48,108 @@ public struct StudyStatsView: View {
                     Button("閉じる") {
                         dismiss()
                     }
-                    .fontWeight(.bold)
                 }
             }
-        }
-    }
-    
-    // 1. メイン指標カード一覧
-    private var summaryGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-            statMetricCard(
-                title: "連続学習日数",
-                value: "\(store.streakDaysCount) 日",
-                icon: "flame.fill",
-                color: .orange
-            )
-            
-            statMetricCard(
-                title: "本日の学習枚数",
-                value: "\(store.todayStudiedCardsCount) 枚",
-                icon: "checkmark.seal.fill",
-                color: .blue
-            )
-            
-            statMetricCard(
-                title: "総コース数",
-                value: "\(store.courses.count) コース",
-                icon: "books.vertical.fill",
-                color: .purple
-            )
-            
-            statMetricCard(
-                title: "累計学習セッション",
-                value: "\(store.studyLogs.count) 回",
-                icon: "chart.line.uptrend.xyaxis",
-                color: .green
-            )
-        }
-    }
-    
-    private func statMetricCard(title: String, value: String, icon: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: icon)
-                    .foregroundColor(color)
-                    .font(.title3)
-                Spacer()
+            .task {
+                recalculateStats()
             }
-            Text(value)
-                .font(.title2)
-                .fontWeight(.bold)
-            Text(title)
-                .font(.caption)
-                .foregroundColor(.secondary)
+        }
+    }
+    
+    // PERF-01: 1回の O(n) ループで統計データを一括計算・再構築
+    private func recalculateStats() {
+        let calendar = Calendar.current
+        let now = Date()
+        
+        // 過去7日間の日付キーを作成
+        var dateList: [Date] = []
+        var statsMap: [Date: Int] = [:]
+        
+        for i in (0..<7).reversed() {
+            if let date = calendar.date(byAdding: .day, value: -i, to: now) {
+                let startDay = calendar.startOfDay(for: date)
+                dateList.append(startDay)
+                statsMap[startDay] = 0
+            }
+        }
+        
+        var correct = 0
+        var doubtful = 0
+        var incorrect = 0
+        
+        // 全ログを1度だけ走査
+        for log in store.studyLogs {
+            let startDay = calendar.startOfDay(for: log.studiedAt)
+            if statsMap[startDay] != nil {
+                statsMap[startDay, default: 0] += 1
+            }
+            
+            switch log.rating {
+            case .correct:
+                correct += 1
+            case .doubtful:
+                doubtful += 1
+            case .incorrect:
+                incorrect += 1
+            }
+        }
+        
+        let stats = dateList.map { date -> DailyStatItem in
+            let label = date.formatted(.dateTime.month().day().weekday(.abbreviated).locale(Locale(identifier: "ja_JP")))
+            let count = statsMap[date] ?? 0
+            return DailyStatItem(date: date, label: label, count: count)
+        }
+        
+        let maxCount = max(1, stats.map(\.count).max() ?? 1)
+        
+        self.cachedLast7DaysStats = stats
+        self.cachedMaxDailyCount = maxCount
+        self.cachedRatingCounts = (correct, doubtful, incorrect)
+    }
+    
+    // 1. サマリーカード
+    private var summaryMetricsCard: some View {
+        HStack(spacing: 16) {
+            metricTile(
+                icon: "flame.fill",
+                iconColor: .orange,
+                value: "\(store.streakDaysCount)日",
+                label: "連続学習ストリーク"
+            )
+            
+            metricTile(
+                icon: "checkmark.circle.fill",
+                iconColor: .green,
+                value: "\(store.todayStudiedCardsCount)枚",
+                label: "本日の学習枚数"
+            )
+            
+            metricTile(
+                icon: "rectangle.stack.fill",
+                iconColor: .blue,
+                value: "\(store.allCardsCount)枚",
+                label: "全単語数"
+            )
         }
         .padding(16)
         .background(cardBgColor)
         .cornerRadius(16)
         .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
+    }
+    
+    private func metricTile(icon: String, iconColor: Color, value: String, label: String) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundColor(iconColor)
+            Text(value)
+                .font(.headline)
+                .fontWeight(.bold)
+            Text(label)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
     }
     
     // 2. 過去7日間の縦棒グラフ
@@ -141,7 +160,7 @@ public struct StudyStatsView: View {
                 .foregroundColor(.primary)
             
             HStack(alignment: .bottom, spacing: 12) {
-                ForEach(last7DaysStats, id: \.label) { stat in
+                ForEach(cachedLast7DaysStats) { stat in
                     VStack(spacing: 6) {
                         Text("\(stat.count)")
                             .font(.caption2)
@@ -153,7 +172,7 @@ public struct StudyStatsView: View {
                                 Spacer()
                                 RoundedRectangle(cornerRadius: 6)
                                     .fill(stat.count > 0 ? Color.blue : Color.gray.opacity(0.2))
-                                    .frame(height: max(6, geo.size.height * CGFloat(stat.count) / CGFloat(maxDailyCount)))
+                                    .frame(height: max(6, geo.size.height * CGFloat(stat.count) / CGFloat(cachedMaxDailyCount)))
                             }
                         }
                         .frame(height: 100)
@@ -175,16 +194,15 @@ public struct StudyStatsView: View {
     
     // 3. 理解度判定の割合
     private var ratingBreakdownCard: some View {
-        let total = max(1, ratingCounts.correct + ratingCounts.doubtful + ratingCounts.incorrect)
-        let correctRatio = Double(ratingCounts.correct) / Double(total)
-        let doubtfulRatio = Double(ratingCounts.doubtful) / Double(total)
-        let incorrectRatio = Double(ratingCounts.incorrect) / Double(total)
+        let total = max(1, cachedRatingCounts.correct + cachedRatingCounts.doubtful + cachedRatingCounts.incorrect)
+        let correctRatio = Double(cachedRatingCounts.correct) / Double(total)
+        let doubtfulRatio = Double(cachedRatingCounts.doubtful) / Double(total)
+        let incorrectRatio = Double(cachedRatingCounts.incorrect) / Double(total)
         
         return VStack(alignment: .leading, spacing: 16) {
             Label("理解度・解答判定内訳", systemImage: "piechart.fill")
                 .font(.headline)
             
-            // 積み上げプログレスバー
             GeometryReader { geo in
                 HStack(spacing: 2) {
                     Rectangle()
@@ -203,9 +221,9 @@ public struct StudyStatsView: View {
             .frame(height: 14)
             
             HStack(spacing: 16) {
-                legendItem(label: "◯ 正解 (\(ratingCounts.correct))", color: .green)
-                legendItem(label: "△ 惜しい (\(ratingCounts.doubtful))", color: .orange)
-                legendItem(label: "✕ 不正解 (\(ratingCounts.incorrect))", color: .red)
+                legendItem(label: "◯ 正解 (\(cachedRatingCounts.correct))", color: .green)
+                legendItem(label: "△ 惜しい (\(cachedRatingCounts.doubtful))", color: .orange)
+                legendItem(label: "✕ 不正解 (\(cachedRatingCounts.incorrect))", color: .red)
             }
             .font(.caption)
         }

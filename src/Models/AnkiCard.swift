@@ -48,46 +48,166 @@ public enum Rating: Int, Codable, CaseIterable, Sendable {
     }
 }
 
-/// 単一の暗記カードモデル
-public struct AnkiCard: Identifiable, Codable, Equatable, Sendable {
-    public let id: UUID
-    public var frontText: String
-    public var backText: String
-    public var frontType: CardFrontType      // 表面タイプ (問題 / 単語 / 穴埋め)
-    
-    // 裏面詳細拡張フィールド
-    public var explanation1: String         // 解説1
-    public var explanation2: String         // 解説2
-    public var explanation3: String         // 解説3
-    public var japaneseTranslation: String  // 日本語訳 / 和訳
-    public var exampleSentence: String      // 例文
-    public var exampleTranslation: String   // 例文の和訳
-    public var synonyms: String            // 類義語
-    public var antonyms: String            // 反対語・対義語
-    
-    public var frontImageURLs: [String] // 表面の複数画像
-    public var backImageURLs: [String]  // 裏面の複数画像
-    public var frontAudioURL: String?   // 表面の音声URL/ファイルパス
-    public var backAudioURL: String?    // 裏面の音声URL/ファイルパス
-    public var speechLanguage: String?  // 読み上げ言語 ("en-US", "ja-JP" など)
-    public var mainCategory: String     // メインカテゴリー (例: 文法, IT, 元素)
-    public var subCategory: String      // サブカテゴリー (例: 動詞, ネットワーク, アルカリ金属)
-    public var tags: [String]
-    public var isFavorite: Bool
-    public var userNotes: String        // ユーザー個人メモ
-    
-    // 間隔反復 (Spaced Repetition) および学習履歴用フィールド
+// RFC-02: カード学習統計サブモデル
+public struct CardStudyMetrics: Codable, Equatable, Sendable {
     public var reps: Int
     public var intervalDays: Int
     public var easeFactor: Double
     public var dueDate: Date
     public var createdAt: Date
-    public var lastStudiedAt: Date?         // 個別カードの最終学習日時
+    public var lastStudiedAt: Date?
     public var lastRating: Rating?
-    public var wrongCount: Int              // 不正解(✕)累計回数
-    public var doubtfulCount: Int           // 惜しい(△)累計回数
-    public var consecutiveCorrectCount: Int // 連続◯(正解)回数
+    public var wrongCount: Int
+    public var doubtfulCount: Int
+    public var consecutiveCorrectCount: Int
+    
+    public init(
+        reps: Int = 0,
+        intervalDays: Int = 0,
+        easeFactor: Double = 2.5,
+        dueDate: Date = Date(),
+        createdAt: Date = Date(),
+        lastStudiedAt: Date? = nil,
+        lastRating: Rating? = nil,
+        wrongCount: Int = 0,
+        doubtfulCount: Int = 0,
+        consecutiveCorrectCount: Int = 0
+    ) {
+        self.reps = reps
+        self.intervalDays = intervalDays
+        self.easeFactor = easeFactor
+        self.dueDate = dueDate
+        self.createdAt = createdAt
+        self.lastStudiedAt = lastStudiedAt
+        self.lastRating = lastRating
+        self.wrongCount = wrongCount
+        self.doubtfulCount = doubtfulCount
+        self.consecutiveCorrectCount = consecutiveCorrectCount
+    }
+}
 
+// RFC-02: カード詳細解説 & メディアサブモデル
+public struct CardDetails: Codable, Equatable, Sendable {
+    public var explanation1: String
+    public var explanation2: String
+    public var explanation3: String
+    public var japaneseTranslation: String
+    public var exampleSentence: String
+    public var exampleTranslation: String
+    public var synonyms: String
+    public var antonyms: String
+    public var frontImageURLs: [String]
+    public var backImageURLs: [String]
+    public var frontAudioURL: String?
+    public var backAudioURL: String?
+    public var speechLanguage: String?
+    public var mainCategory: String
+    public var subCategory: String
+    public var tags: [String]
+    public var isFavorite: Bool
+    public var userNotes: String
+    
+    public init(
+        explanation1: String = "",
+        explanation2: String = "",
+        explanation3: String = "",
+        japaneseTranslation: String = "",
+        exampleSentence: String = "",
+        exampleTranslation: String = "",
+        synonyms: String = "",
+        antonyms: String = "",
+        frontImageURLs: [String] = [],
+        backImageURLs: [String] = [],
+        frontAudioURL: String? = nil,
+        backAudioURL: String? = nil,
+        speechLanguage: String? = nil,
+        mainCategory: String = "",
+        subCategory: String = "",
+        tags: [String] = [],
+        isFavorite: Bool = false,
+        userNotes: String = ""
+    ) {
+        self.explanation1 = explanation1
+        self.explanation2 = explanation2
+        self.explanation3 = explanation3
+        self.japaneseTranslation = japaneseTranslation
+        self.exampleSentence = exampleSentence
+        self.exampleTranslation = exampleTranslation
+        self.synonyms = synonyms
+        self.antonyms = antonyms
+        self.frontImageURLs = frontImageURLs
+        self.backImageURLs = backImageURLs
+        self.frontAudioURL = frontAudioURL
+        self.backAudioURL = backAudioURL
+        self.speechLanguage = speechLanguage
+        self.mainCategory = mainCategory
+        self.subCategory = subCategory
+        self.tags = tags
+        self.isFavorite = isFavorite
+        self.userNotes = userNotes
+    }
+}
+
+/// 単一の暗記カードモデル (RFC-02: サブモデル責任分解 & 既存API完全維持)
+public struct AnkiCard: Identifiable, Codable, Equatable, Sendable {
+    public let id: UUID
+    public var frontText: String
+    public var backText: String
+    public var frontType: CardFrontType
+    
+    // サブモデル構造体
+    public var details: CardDetails
+    public var metrics: CardStudyMetrics
+    
+    // 既存プロパティへのフォワードアクセサ (後方互換性の完全維持)
+    public var explanation1: String { get { details.explanation1 } set { details.explanation1 = newValue } }
+    public var explanation2: String { get { details.explanation2 } set { details.explanation2 = newValue } }
+    public var explanation3: String { get { details.explanation3 } set { details.explanation3 = newValue } }
+    public var japaneseTranslation: String { get { details.japaneseTranslation } set { details.japaneseTranslation = newValue } }
+    public var exampleSentence: String { get { details.exampleSentence } set { details.exampleSentence = newValue } }
+    public var exampleTranslation: String { get { details.exampleTranslation } set { details.exampleTranslation = newValue } }
+    public var synonyms: String { get { details.synonyms } set { details.synonyms = newValue } }
+    public var antonyms: String { get { details.antonyms } set { details.antonyms = newValue } }
+    public var frontImageURLs: [String] { get { details.frontImageURLs } set { details.frontImageURLs = newValue } }
+    public var backImageURLs: [String] { get { details.backImageURLs } set { details.backImageURLs = newValue } }
+    public var frontAudioURL: String? { get { details.frontAudioURL } set { details.frontAudioURL = newValue } }
+    public var backAudioURL: String? { get { details.backAudioURL } set { details.backAudioURL = newValue } }
+    public var speechLanguage: String? { get { details.speechLanguage } set { details.speechLanguage = newValue } }
+    public var mainCategory: String { get { details.mainCategory } set { details.mainCategory = newValue } }
+    public var subCategory: String { get { details.subCategory } set { details.subCategory = newValue } }
+    public var tags: [String] { get { details.tags } set { details.tags = newValue } }
+    public var isFavorite: Bool { get { details.isFavorite } set { details.isFavorite = newValue } }
+    public var userNotes: String { get { details.userNotes } set { details.userNotes = newValue } }
+    
+    public var reps: Int { get { metrics.reps } set { metrics.reps = newValue } }
+    public var intervalDays: Int { get { metrics.intervalDays } set { metrics.intervalDays = newValue } }
+    public var easeFactor: Double { get { metrics.easeFactor } set { metrics.easeFactor = newValue } }
+    public var dueDate: Date { get { metrics.dueDate } set { metrics.dueDate = newValue } }
+    public var createdAt: Date { get { metrics.createdAt } set { metrics.createdAt = newValue } }
+    public var lastStudiedAt: Date? { get { metrics.lastStudiedAt } set { metrics.lastStudiedAt = newValue } }
+    public var lastRating: Rating? { get { metrics.lastRating } set { metrics.lastRating = newValue } }
+    public var wrongCount: Int { get { metrics.wrongCount } set { metrics.wrongCount = newValue } }
+    public var doubtfulCount: Int { get { metrics.doubtfulCount } set { metrics.doubtfulCount = newValue } }
+    public var consecutiveCorrectCount: Int { get { metrics.consecutiveCorrectCount } set { metrics.consecutiveCorrectCount = newValue } }
+    
+    // 主イニシャライザ
+    public init(
+        id: UUID = UUID(),
+        frontText: String,
+        backText: String,
+        frontType: CardFrontType = .question,
+        details: CardDetails = CardDetails(),
+        metrics: CardStudyMetrics = CardStudyMetrics()
+    ) {
+        self.id = id
+        self.frontText = frontText
+        self.backText = backText
+        self.frontType = frontType
+        self.details = details
+        self.metrics = metrics
+    }
+    
+    // 互換性イニシャライザ
     public init(
         id: UUID = UUID(),
         frontText: String,
@@ -126,34 +246,38 @@ public struct AnkiCard: Identifiable, Codable, Equatable, Sendable {
         self.frontText = frontText
         self.backText = backText
         self.frontType = frontType
-        self.explanation1 = explanation1
-        self.explanation2 = explanation2
-        self.explanation3 = explanation3
-        self.japaneseTranslation = japaneseTranslation
-        self.exampleSentence = exampleSentence
-        self.exampleTranslation = exampleTranslation
-        self.synonyms = synonyms
-        self.antonyms = antonyms
-        self.frontImageURLs = frontImageURLs
-        self.backImageURLs = backImageURLs
-        self.frontAudioURL = frontAudioURL
-        self.backAudioURL = backAudioURL
-        self.speechLanguage = speechLanguage
-        self.mainCategory = mainCategory
-        self.subCategory = subCategory
-        self.tags = tags
-        self.isFavorite = isFavorite
-        self.userNotes = userNotes
-        self.reps = reps
-        self.intervalDays = intervalDays
-        self.easeFactor = easeFactor
-        self.dueDate = dueDate
-        self.createdAt = createdAt
-        self.lastStudiedAt = lastStudiedAt
-        self.lastRating = lastRating
-        self.wrongCount = wrongCount
-        self.doubtfulCount = doubtfulCount
-        self.consecutiveCorrectCount = consecutiveCorrectCount
+        self.details = CardDetails(
+            explanation1: explanation1,
+            explanation2: explanation2,
+            explanation3: explanation3,
+            japaneseTranslation: japaneseTranslation,
+            exampleSentence: exampleSentence,
+            exampleTranslation: exampleTranslation,
+            synonyms: synonyms,
+            antonyms: antonyms,
+            frontImageURLs: frontImageURLs,
+            backImageURLs: backImageURLs,
+            frontAudioURL: frontAudioURL,
+            backAudioURL: backAudioURL,
+            speechLanguage: speechLanguage,
+            mainCategory: mainCategory,
+            subCategory: subCategory,
+            tags: tags,
+            isFavorite: isFavorite,
+            userNotes: userNotes
+        )
+        self.metrics = CardStudyMetrics(
+            reps: reps,
+            intervalDays: intervalDays,
+            easeFactor: easeFactor,
+            dueDate: dueDate,
+            createdAt: createdAt,
+            lastStudiedAt: lastStudiedAt,
+            lastRating: lastRating,
+            wrongCount: wrongCount,
+            doubtfulCount: doubtfulCount,
+            consecutiveCorrectCount: consecutiveCorrectCount
+        )
     }
     
     /// カテゴリー表示用表示文字列（例: "英語 ❯ 単語"）

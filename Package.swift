@@ -11,16 +11,19 @@ let package = Package(
         .library(
             name: "kskAnkiCore",
             targets: ["kskAnkiCore"]
+        ),
+        .executable(
+            name: "kskAnkiVerifier",
+            targets: ["kskAnkiVerifier"]
         )
     ],
     targets: [
         .target(
             name: "kskAnkiCore",
-            path: "src",
-            exclude: ["App"]
+            path: "src"
         ),
-        .testTarget(
-            name: "kskAnkiTests",
+        .executableTarget(
+            name: "kskAnkiVerifier",
             dependencies: ["kskAnkiCore"],
             path: "tests"
         )

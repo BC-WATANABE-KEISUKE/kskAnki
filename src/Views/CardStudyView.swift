@@ -5,6 +5,7 @@ import SwiftUI
 public struct CardStudyView: View {
     public let deck: AnkiDeck
     @State private var dueCards: [AnkiCard]
+    @State private var sessionRatings: [(cardId: UUID, rating: Rating)] = []
     @State private var currentIndex: Int = 0
     @State private var isRevealed: Bool = false
     @State private var isCompleted: Bool = false
@@ -18,14 +19,20 @@ public struct CardStudyView: View {
     // ARC-05: 設定配線 (Haptics 触覚効果フラグ)
     @AppStorage("enableHaptics") private var enableHaptics: Bool = true
     
-    public let onFinishSession: (([AnkiCard], Bool) -> Void)?
+    public let onFinishSession: (([AnkiCard], [(UUID, Rating)], Bool) -> Void)?
+    public let onRecordRating: ((UUID, Rating) -> Void)?
     
     private let scheduler = SpacedRepetitionScheduler()
     @Environment(\.dismiss) private var dismiss
     
-    public init(deck: AnkiDeck, onFinishSession: (([AnkiCard], Bool) -> Void)? = nil) {
+    public init(
+        deck: AnkiDeck,
+        onRecordRating: ((UUID, Rating) -> Void)? = nil,
+        onFinishSession: (([AnkiCard], [(UUID, Rating)], Bool) -> Void)? = nil
+    ) {
         self.deck = deck
         self._dueCards = State(initialValue: deck.cards)
+        self.onRecordRating = onRecordRating
         self.onFinishSession = onFinishSession
     }
     
@@ -66,7 +73,7 @@ public struct CardStudyView: View {
                     // 裏面が開いたタイミングで ◯ △ ✕ 3択ボタンを表示
                     if isRevealed {
                         VStack(spacing: 8) {
-                            Text("💡 ヒント: カードを右スワイプで ◯(正解)、左で ✕(不正解)、上で △(惜しい)")
+                            Text("💡 ヒント: カードを右スワイプで ◯(正解)、左で ✕(不正解)")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                             
@@ -105,12 +112,12 @@ public struct CardStudyView: View {
                 titleVisibility: .visible
             ) {
                 Button("ここまでの成果を保存して中断") {
-                    onFinishSession?(dueCards, true)
+                    onFinishSession?(dueCards, sessionRatings, true)
                     dismiss()
                 }
                 
                 Button("保存せずに中断", role: .destructive) {
-                    onFinishSession?(deck.cards, false)
+                    onFinishSession?(deck.cards, [], false)
                     dismiss()
                 }
                 
@@ -207,7 +214,7 @@ public struct CardStudyView: View {
             Spacer()
             
             Button(action: {
-                onFinishSession?(dueCards, true)
+                onFinishSession?(dueCards, sessionRatings, true)
                 dismiss()
             }) {
                 Text("コース画面に戻る")
@@ -267,8 +274,13 @@ public struct CardStudyView: View {
     }
     
     private func handleRating(_ rating: Rating) {
-        let updatedCard = scheduler.processReview(card: dueCards[currentIndex], rating: rating)
+        let currentCard = dueCards[currentIndex]
+        let updatedCard = scheduler.processReview(card: currentCard, rating: rating)
         dueCards[currentIndex] = updatedCard
+        
+        // NEW-02: 判定ごとにリアルタイムで学習ログ記録コールバックを通知
+        sessionRatings.append((cardId: currentCard.id, rating: rating))
+        onRecordRating?(currentCard.id, rating)
         
         // ARC-05: 触覚フィードバックの実行
         if enableHaptics {
