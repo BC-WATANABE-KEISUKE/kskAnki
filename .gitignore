@@ -1,0 +1,34 @@
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Swift Build & Package Manager
+.build/
+.swiftpm/
+*.xcodeproj
+*.xcworkspace
+
+# Node / Dependency directories (if applicable)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+
+# Build outputs & Cache
+dist/
+build/
+.cache/
+*.log
+
+# Environment & Scratch
+.env
+.env.local
+.scratch/
