@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// iPhoneアプリのエントリーポイント (NEW-03 / BLK-01: @main重複防止ガード付き)
+/// iPhoneアプリのメインエントリービュー (NEW-03 / BLK-01 / NEW2-08)
 @available(iOS 17.0, macOS 14.0, *)
 public struct kskAnkiAppView: View {
     @State private var deckStore = DeckStore()
@@ -11,17 +11,3 @@ public struct kskAnkiAppView: View {
         DeckListView(store: deckStore)
     }
 }
-
-#if !SWIFT_PACKAGE
-@available(iOS 17.0, macOS 14.0, *)
-@main
-struct kskAnkiApp: App {
-    @State private var deckStore = DeckStore()
-    
-    var body: some Scene {
-        WindowGroup {
-            DeckListView(store: deckStore)
-        }
-    }
-}
-#endif

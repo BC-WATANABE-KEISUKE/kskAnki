@@ -35,6 +35,7 @@ public struct BackupService: Sendable {
         store.courses = snapshot.courses
         store.studyLogs = snapshot.studyLogs
         store.dailyGoalCardsCount = snapshot.dailyGoalCardsCount
+        store.recalculateMetrics()
         store.saveToDisk()
         return true
     }

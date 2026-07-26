@@ -100,11 +100,6 @@ public struct SettingsView: View {
                         }
                         
                         Button(action: {
-                            #if canImport(UIKit)
-                            if let pasteStr = UIPasteboard.general.string, pasteStr.contains("courses") {
-                                restoreInputJSON = pasteStr
-                            }
-                            #endif
                             isImportSheetPresented = true
                         }) {
                             HStack {
@@ -172,9 +167,21 @@ public struct SettingsView: View {
             .sheet(isPresented: $isImportSheetPresented) {
                 NavigationStack {
                     VStack(alignment: .leading, spacing: 16) {
-                        Text("復元する JSON バックアップデータを貼り付けてください:")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+                        HStack {
+                            Text("復元する JSON バックアップデータを貼り付けてください:")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            #if canImport(UIKit)
+                            Button("📋 クリップボードから読み込み") {
+                                if let str = UIPasteboard.general.string {
+                                    restoreInputJSON = str
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                            #endif
+                        }
                         
                         TextEditor(text: $restoreInputJSON)
                             .font(.system(.caption, design: .monospaced))
