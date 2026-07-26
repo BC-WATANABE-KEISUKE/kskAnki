@@ -55,6 +55,23 @@ public struct FlashcardView: View {
                     
                     Spacer()
                     
+                    Button(action: {
+                        playFrontSpeech()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "speaker.wave.2.fill")
+                            Text("表面朗読")
+                        }
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.blue.opacity(0.12))
+                        .foregroundColor(.blue)
+                        .cornerRadius(12)
+                    }
+                    .buttonStyle(.plain)
+                    
                     if card.isFavorite {
                         Image(systemName: "star.fill")
                             .foregroundColor(.yellow)

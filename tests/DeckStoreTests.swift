@@ -19,6 +19,7 @@ public struct DeckStoreVerifier {
         let cardId = UUID()
         
         store.studyLogs = [] // テストログの初期化
+        store.recalculateMetrics()
         store.recordStudy(cardId: cardId, rating: .correct, at: yesterday)
         store.recordStudy(cardId: cardId, rating: .correct, at: now)
         

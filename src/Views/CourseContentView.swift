@@ -126,6 +126,17 @@ public struct CourseContentView: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .lineLimit(2)
+            
+            if let categoryPath = card.categoryPath {
+                Text(categoryPath)
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.blue.opacity(0.1))
+                    .foregroundColor(.blue)
+                    .cornerRadius(6)
+            }
         }
         .padding(.vertical, 4)
     }

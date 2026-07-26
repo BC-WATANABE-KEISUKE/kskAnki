@@ -60,6 +60,9 @@ public final class DeckStore {
     public private(set) var todayStudiedCardsCount: Int = 0
     public private(set) var streakDaysCount: Int = 0
     
+    // NEW2-03: O(1) 差分更新用 Set キャッシュ
+    private var studyDaysCache: Set<Date> = []
+    
     // NEW2-02: 直列化保存アクター
     private let persistenceWriter: PersistenceWriter
     
@@ -75,12 +78,18 @@ public final class DeckStore {
         recalculateMetrics()
     }
     
-    // PERF-02: メトリクスの再計算・更新処理
+    // PERF-02: メトリクスの初期化・再計算処理 (起動・ロード・復元・一括処理用)
     public func recalculateMetrics() {
         let calendar = Calendar.current
         self.todayStudiedCardsCount = studyLogs.filter { calendar.isDateInToday($0.studiedAt) }.count
         
         let studyDates = Set(studyLogs.map { calendar.startOfDay(for: $0.studiedAt) })
+        self.studyDaysCache = studyDates
+        self.streakDaysCount = computeStreak(from: studyDates)
+    }
+    
+    private func computeStreak(from studyDates: Set<Date>) -> Int {
+        let calendar = Calendar.current
         var currentStreak = 0
         var checkDate = calendar.startOfDay(for: Date())
         
@@ -94,7 +103,7 @@ public final class DeckStore {
             checkDate = prevDate
         }
         
-        self.streakDaysCount = currentStreak
+        return currentStreak
     }
     
     private var saveFileURL: URL {
@@ -103,29 +112,42 @@ public final class DeckStore {
         return docDir.appendingPathComponent("kskAnki_store.json")
     }
     
-    // --- ディスク永続化 (NEW2-02: PersistenceWriter による直列化非同期保存 & 同期保存) ---
+    // --- ディスク永続化 (NEW2-05: 同期保存と非同期保存の明確分離) ---
+    
+    /// 同期保存。書き込みの成否結果を返す (NEW2-05)
     @discardableResult
-    public func saveToDisk(sync: Bool = false) -> Bool {
+    public func saveToDiskSync() -> Bool {
         let snapshot = DeckStoreSnapshot(
             folders: folders,
             courses: courses,
             studyLogs: studyLogs,
             dailyGoalCardsCount: dailyGoalCardsCount
         )
-        let targetURL = saveFileURL
-        
+        do {
+            let data = try JSONEncoder().encode(snapshot)
+            try data.write(to: saveFileURL, options: [.atomic, .completeFileProtection])
+            return true
+        } catch {
+            logger.error("Failed to save DeckStore to disk: \(error.localizedDescription)")
+            return false
+        }
+    }
+    
+    /// 非同期スケジュール保存 (PersistenceWriter アクターによる直列化)
+    @discardableResult
+    public func saveToDisk(sync: Bool = false) -> Bool {
         if sync {
-            do {
-                let data = try JSONEncoder().encode(snapshot)
-                try data.write(to: targetURL, options: [.atomic, .completeFileProtection])
-            } catch {
-                logger.error("Failed to save DeckStore to disk: \(error.localizedDescription)")
-            }
-        } else {
-            let writer = persistenceWriter
-            Task {
-                await writer.write(snapshot)
-            }
+            return saveToDiskSync()
+        }
+        let snapshot = DeckStoreSnapshot(
+            folders: folders,
+            courses: courses,
+            studyLogs: studyLogs,
+            dailyGoalCardsCount: dailyGoalCardsCount
+        )
+        let writer = persistenceWriter
+        Task {
+            await writer.write(snapshot)
         }
         return true
     }
@@ -213,11 +235,21 @@ public final class DeckStore {
         saveToDisk()
     }
     
-    // --- 学習ログ記録 & 一元管理 (NEW-02: 全学習判定ログを一元受け付け) ---
+    // --- 学習ログ記録 & 一元管理 (NEW2-03: 真の O(1) 差分更新で 39ms 全走査フリーズを完治) ---
     public func recordStudy(cardId: UUID, rating: Rating, at date: Date = Date()) {
         let log = StudyLog(cardId: cardId, rating: rating, studiedAt: date)
         studyLogs.append(log)
-        recalculateMetrics()
+        
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            todayStudiedCardsCount += 1
+        }
+        
+        let day = calendar.startOfDay(for: date)
+        if studyDaysCache.insert(day).inserted {
+            streakDaysCount = computeStreak(from: studyDaysCache)
+        }
+        
         saveToDisk()
     }
     
