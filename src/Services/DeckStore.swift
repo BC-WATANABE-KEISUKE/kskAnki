@@ -26,6 +26,25 @@ public struct StudyLog: Codable, Sendable, Identifiable {
     }
 }
 
+/// ディスクへの非同期・直列化保存アクター (NEW2-02: 競合・データ上書き消失防止)
+public actor PersistenceWriter {
+    private let saveFileURL: URL
+    
+    public init(saveFileURL: URL) {
+        self.saveFileURL = saveFileURL
+    }
+    
+    public func write(_ snapshot: DeckStoreSnapshot) {
+        do {
+            let data = try JSONEncoder().encode(snapshot)
+            // SEC-03: completeFileProtection オプションでデバイス暗号化保護を適用
+            try data.write(to: saveFileURL, options: [.atomic, .completeFileProtection])
+        } catch {
+            logger.error("Failed to save DeckStore to disk: \(error.localizedDescription)")
+        }
+    }
+}
+
 /// デッキ＆コース＆フォルダデータ管理ストア (ARC-08: MainActor適合 & メインスレッド安全)
 @MainActor
 @Observable
@@ -41,64 +60,50 @@ public final class DeckStore {
     public private(set) var todayStudiedCardsCount: Int = 0
     public private(set) var streakDaysCount: Int = 0
     
+    // NEW2-02: 直列化保存アクター
+    private let persistenceWriter: PersistenceWriter
+    
+    public init() {
+        let defaultURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("kskAnki_store.json") ?? FileManager.default.temporaryDirectory.appendingPathComponent("kskAnki_store.json")
+        self.persistenceWriter = PersistenceWriter(saveFileURL: defaultURL)
+        
+        loadFromDisk()
+        if courses.isEmpty {
+            loadSampleData()
+        }
+        recalculateMetrics()
+    }
+    
     // PERF-02: メトリクスの再計算・更新処理
     public func recalculateMetrics() {
         let calendar = Calendar.current
         self.todayStudiedCardsCount = studyLogs.filter { calendar.isDateInToday($0.studiedAt) }.count
         
-        guard !studyLogs.isEmpty else {
-            self.streakDaysCount = 0
-            return
-        }
-        
         let studyDates = Set(studyLogs.map { calendar.startOfDay(for: $0.studiedAt) })
-        var streak = 0
+        var currentStreak = 0
         var checkDate = calendar.startOfDay(for: Date())
         
         if !studyDates.contains(checkDate) {
-            if let yesterday = calendar.date(byAdding: .day, value: -1, to: checkDate), studyDates.contains(yesterday) {
-                checkDate = yesterday
-            } else {
-                self.streakDaysCount = 0
-                return
-            }
+            checkDate = calendar.date(byAdding: .day, value: -1, to: checkDate) ?? checkDate
         }
         
         while studyDates.contains(checkDate) {
-            streak += 1
-            guard let previousDay = calendar.date(byAdding: .day, value: -1, to: checkDate) else { break }
-            checkDate = previousDay
+            currentStreak += 1
+            guard let prevDate = calendar.date(byAdding: .day, value: -1, to: checkDate) else { break }
+            checkDate = prevDate
         }
         
-        self.streakDaysCount = streak
+        self.streakDaysCount = currentStreak
     }
     
-    // 全コースから集計導出される全デッキ一覧 (ARC-01 一元化)
-    public var allDecks: [AnkiDeck] {
-        courses.flatMap(\.decks)
-    }
-    
-    // 全コース・デッキに含まれる総カード数
-    public var allCardsCount: Int {
-        allDecks.reduce(0) { $0 + $1.cards.count }
-    }
-    
-    private let saveFileURL: URL = {
+    private var saveFileURL: URL {
         let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
         let docDir = paths.first ?? FileManager.default.temporaryDirectory
         return docDir.appendingPathComponent("kskAnki_store.json")
-    }()
-    
-    public init(folders: [CourseFolder] = [], courses: [Course] = []) {
-        if !loadFromDisk() {
-            self.folders = folders.isEmpty ? DeckStore.sampleFolders : folders
-            self.courses = courses.isEmpty ? DeckStore.sampleCourses(folders: self.folders) : courses
-            saveToDisk()
-        }
-        recalculateMetrics()
     }
     
-    // --- ディスク永続化 (PERF-03: メインスレッドをブロックしないバックグラウンド非同期保存 & 同期保存オプション) ---
+    // --- ディスク永続化 (NEW2-02: PersistenceWriter による直列化非同期保存 & 同期保存) ---
     @discardableResult
     public func saveToDisk(sync: Bool = false) -> Bool {
         let snapshot = DeckStoreSnapshot(
@@ -117,14 +122,9 @@ public final class DeckStore {
                 logger.error("Failed to save DeckStore to disk: \(error.localizedDescription)")
             }
         } else {
-            Task.detached(priority: .utility) {
-                do {
-                    let data = try JSONEncoder().encode(snapshot)
-                    // SEC-03: completeFileProtection オプションでデバイス暗号化保護を適用
-                    try data.write(to: targetURL, options: [.atomic, .completeFileProtection])
-                } catch {
-                    logger.error("Failed to save DeckStore to disk: \(error.localizedDescription)")
-                }
+            let writer = persistenceWriter
+            Task {
+                await writer.write(snapshot)
             }
         }
         return true
@@ -142,6 +142,7 @@ public final class DeckStore {
             self.courses = snapshot.courses
             self.studyLogs = snapshot.studyLogs
             self.dailyGoalCardsCount = snapshot.dailyGoalCardsCount
+            recalculateMetrics()
             return true
         } catch {
             logger.error("Failed to load DeckStore from disk: \(error.localizedDescription)")
@@ -155,21 +156,29 @@ public final class DeckStore {
         saveToDisk()
     }
     
+    public func deleteFolder(_ folderId: UUID) {
+        folders.removeAll { $0.id == folderId }
+        courses.removeAll { $0.folderId == folderId }
+        saveToDisk()
+    }
+    
     // --- コース操作 ---
     public func addCourse(_ course: Course) {
         courses.append(course)
         saveToDisk()
     }
     
-    public func updateCourse(_ course: Course) {
-        if let idx = courses.firstIndex(where: { $0.id == course.id }) {
-            courses[idx] = course
+    public func updateCourse(_ updatedCourse: Course) {
+        if let idx = courses.firstIndex(where: { $0.id == updatedCourse.id }) {
+            courses[idx] = updatedCourse
+            recalculateMetrics()
             saveToDisk()
         }
     }
     
     public func deleteCourse(_ courseId: UUID) {
         courses.removeAll { $0.id == courseId }
+        recalculateMetrics()
         saveToDisk()
     }
     
@@ -180,21 +189,31 @@ public final class DeckStore {
         }
     }
     
-    // --- カード & デッキ操作 (ARC-04: 学習ログ追加) ---
-    public func addCard(_ card: AnkiCard, toDeckId deckId: UUID) {
-        for cIdx in courses.indices {
-            for dIdx in courses[cIdx].decks.indices {
+    // --- 複数カード一括更新 API (NEW-05: 1セッションの保存を1回に集約) ---
+    public func updateCardsInDeckBulk(_ updatedCards: [AnkiCard], inDeckId deckId: UUID) {
+        var cardMap = [UUID: AnkiCard]()
+        for card in updatedCards {
+            cardMap[card.id] = card
+        }
+        
+        for cIdx in 0..<courses.count {
+            for dIdx in 0..<courses[cIdx].decks.count {
                 if courses[cIdx].decks[dIdx].id == deckId {
-                    courses[cIdx].decks[dIdx].cards.append(card)
-                    courses[cIdx].updatedAt = Date()
-                    saveToDisk()
-                    return
+                    for cardIdx in 0..<courses[cIdx].decks[dIdx].cards.count {
+                        let cid = courses[cIdx].decks[dIdx].cards[cardIdx].id
+                        if let newCard = cardMap[cid] {
+                            courses[cIdx].decks[dIdx].cards[cardIdx] = newCard
+                        }
+                    }
                 }
             }
         }
+        
+        recalculateMetrics()
+        saveToDisk()
     }
     
-    // NEW-02: 明示的な学習ログ記録 API (コース学習 & マイ単語帳学習共通)
+    // --- 学習ログ記録 & 一元管理 (NEW-02: 全学習判定ログを一元受け付け) ---
     public func recordStudy(cardId: UUID, rating: Rating, at date: Date = Date()) {
         let log = StudyLog(cardId: cardId, rating: rating, studiedAt: date)
         studyLogs.append(log)
@@ -202,130 +221,64 @@ public final class DeckStore {
         saveToDisk()
     }
     
-    // NEW-05: 1セッションの複数カード成果を一括反映し、ディスク保存を1回に集約
-    public func updateCardsInDeckBulk(_ updatedCards: [AnkiCard], inDeckId: UUID) {
-        var didModify = false
-        for cIdx in courses.indices {
-            for dIdx in courses[cIdx].decks.indices {
-                if courses[cIdx].decks[dIdx].id == inDeckId {
-                    for card in updatedCards {
-                        if let cardIdx = courses[cIdx].decks[dIdx].cards.firstIndex(where: { $0.id == card.id }) {
-                            courses[cIdx].decks[dIdx].cards[cardIdx] = card
-                            didModify = true
-                        }
-                    }
-                    if didModify {
-                        courses[cIdx].updatedAt = Date()
-                        saveToDisk() // 1セッション全体の更新に対して最後に1回だけ保存
-                        return
-                    }
-                }
-            }
+    // 全登録カード数の取得
+    public var allCardsCount: Int {
+        courses.reduce(0) { sum, course in
+            sum + course.decks.reduce(0) { dSum, deck in dSum + deck.cards.count }
         }
     }
     
-    public func updateCard(_ card: AnkiCard, inDeckId deckId: UUID) {
-        for cIdx in courses.indices {
-            for dIdx in courses[cIdx].decks.indices {
-                if courses[cIdx].decks[dIdx].id == deckId {
-                    if let cardIdx = courses[cIdx].decks[dIdx].cards.firstIndex(where: { $0.id == card.id }) {
-                        courses[cIdx].decks[dIdx].cards[cardIdx] = card
-                        courses[cIdx].updatedAt = Date()
-                        saveToDisk()
-                        return
-                    }
-                }
-            }
-        }
+    // 全デッキ一覧の取得
+    public var allDecks: [AnkiDeck] {
+        courses.flatMap { $0.decks }
     }
     
-    // サンプルフォルダ定義
-    public static var sampleFolders: [CourseFolder] {
-        return [
-            CourseFolder(id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!, name: "語学学習", iconName: "globe.americas.fill"),
-            CourseFolder(id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!, name: "IT・資格試験", iconName: "cpu.fill")
-        ]
-    }
-    
-    // サンプルコース定義
-    public static func sampleCourses(folders: [CourseFolder]) -> [Course] {
-        let langFolderId = folders.first(where: { $0.name == "語学学習" })?.id
-        let itFolderId = folders.first(where: { $0.name == "IT・資格試験" })?.id
+    // --- サンプルデータ生成 ---
+    private func loadSampleData() {
+        let folderIT = CourseFolder(name: "Google Cloud / IT資格", themeColorHex: "#4285F4")
+        let folderLang = CourseFolder(name: "語学・英単語", themeColorHex: "#EA4335")
+        self.folders = [folderIT, folderLang]
         
-        let now = Date()
-        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now)
-        
-        let aceDeckCards: [AnkiCard] = [
-            AnkiCard(
-                frontText: "Identity-Aware Proxy (IAP)",
-                backText: "IAP",
-                frontType: .word,
-                explanation1: "VPNを使わずに、HTTPSやSSH/RDPによるVMへのアクセスをユーザーのGoogleアカウントとコンテキストに基づき安全に制御・認可するサービス。",
-                explanation2: "ファイアウォールルールでは 35.235.240.0/20 からのアクセスを許可する必要がある。",
-                japaneseTranslation: "Identity-Aware Proxy",
-                mainCategory: "Google Cloud",
-                subCategory: "IAM・セキュリティ",
-                tags: ["ACE", "最頻出"]
-            ),
-            AnkiCard(
-                frontText: "GCEにおいてアクセス制限の鉄則として推奨されるのは{{事前定義されたロール}}である。",
-                backText: "事前定義されたロール (Predefined Roles)",
-                frontType: .cloze,
-                explanation1: "基本ロール (Owner, Editor, Viewer) は権限が強すぎるため使わない。最小権限の原則を満たすベストプラクティス。",
-                japaneseTranslation: "roles/compute.networkAdmin など細かく調整されたロールが正解。",
-                mainCategory: "Google Cloud",
-                subCategory: "IAM・セキュリティ",
-                tags: ["IAM", "ACE"]
-            )
-        ]
-        
-        let aceDeck = AnkiDeck(
-            name: "Google Cloud ACE 重要用語・問題集",
-            description: "Associate Cloud Engineer 資格試験必須用語＆コマンド",
-            cards: aceDeckCards
+        let card1 = AnkiCard(
+            frontText: "Cloud Storage のストレージクラスで、アクセス頻度が月1回未満のコスト最適化クラスは？",
+            backText: "Nearline Storage",
+            frontType: .question,
+            explanation1: "Nearline Storageは30日以上の保管が前提。月1回未満のアクセスに最適。",
+            japaneseTranslation: "ニアライン・ストレージ",
+            exampleSentence: "Use Nearline storage for data accessed less than once a month.",
+            mainCategory: "Google Cloud",
+            subCategory: "Cloud Storage",
+            tags: ["ACE", "PCA", "頻出"]
         )
-
-        let englishDeck = AnkiDeck(
-            name: "TOEIC頻出英単語 800点レベル",
-            description: "スコア直結の必須語彙",
-            cards: [
-                AnkiCard(
-                    frontText: "Implementation",
-                    backText: "実行、実装 (名詞)",
-                    frontType: .word,
-                    explanation1: "プロジェクト計画やソフトウェア開発における『仕様をコード化・実行するプロセス』を指します。",
-                    japaneseTranslation: "実装、実行、履行",
-                    exampleSentence: "The implementation of the new policy will begin next month.",
-                    exampleTranslation: "新方針の実行は来月から始まります。",
-                    mainCategory: "英語",
-                    subCategory: "ビジネス単語",
-                    tags: ["TOEIC"],
-                    lastStudiedAt: now
-                )
-            ]
+        let card2 = AnkiCard(
+            frontText: "IAMにおける {{最小権限の原則}} を適用するために使用する事前定義ロールの選択指針は？",
+            backText: "業務に必要な最小限のアクセス権を持つロールを割り当てる。",
+            frontType: .cloze,
+            explanation1: "基本ロール (Owner, Editor, Viewer) は広範すぎるため、事前定義ロールまたはカスタムロールを推奨。",
+            japaneseTranslation: "最小権限の原則",
+            mainCategory: "Google Cloud",
+            subCategory: "IAM",
+            tags: ["IAM", "セキュリティ"]
         )
-
-        return [
-            Course(
-                title: "Google Cloud 認定 Associate Cloud Engineer (ACE)",
-                description: "GCPの必須サービス・IAM・CLIコマンド・インフラ完全網羅",
-                iconName: "cloud.fill",
-                themeColorHex: "#4285F4",
-                decks: [aceDeck],
-                folderId: itFolderId,
-                lastStudiedAt: now,
-                updatedAt: now
-            ),
-            Course(
-                title: "英会話・TOEICマスターコース",
-                description: "日常会話からビジネス英語まで幅広くカバー",
-                iconName: "globe.americas.fill",
-                themeColorHex: "#FF9500",
-                decks: [englishDeck],
-                folderId: langFolderId,
-                lastStudiedAt: now,
-                updatedAt: yesterday ?? now
-            )
-        ]
+        
+        let deckGCP = AnkiDeck(name: "Google Cloud 基礎問題集", cards: [card1, card2])
+        let courseACE = Course(title: "Google Cloud Associate Cloud Engineer (ACE) 対策", description: "ACE合格に必要な必須知識・CLIコマンド・IAM設計の重要カード集", decks: [deckGCP], folderId: folderIT.id)
+        
+        let card3 = AnkiCard(
+            frontText: "Implementation",
+            backText: "実装・実行・履行",
+            frontType: .word,
+            explanation1: "動詞 implement (実装する) の名詞形。",
+            japaneseTranslation: "実装、実行",
+            exampleSentence: "The implementation of the new Cloud architecture was successful.",
+            mainCategory: "英語",
+            subCategory: "IT英単語",
+            tags: ["単語", "IT英語"]
+        )
+        
+        let deckVocab = AnkiDeck(name: "IT・クラウド必須英単語", cards: [card3])
+        let courseTOEIC = Course(title: "ITエンジニアのための実践英単語", description: "ドキュメント読解や海外チームとの連携に役立つ必須単語帳", decks: [deckVocab], folderId: folderLang.id)
+        
+        self.courses = [courseACE, courseTOEIC]
     }
 }
