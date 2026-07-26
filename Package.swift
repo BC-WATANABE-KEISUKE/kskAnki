@@ -20,7 +20,8 @@ let package = Package(
     targets: [
         .target(
             name: "kskAnkiCore",
-            path: "src"
+            path: "src",
+            exclude: ["App/Info.plist", "App/Assets.xcassets"]
         ),
         .executableTarget(
             name: "kskAnkiVerifier",

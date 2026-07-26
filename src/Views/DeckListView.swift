@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// アプリメイン・全フォルダ＆コース＆マイ単語帳一覧画面 (ARC-01, ARC-08 MainActor適合, PERF-02 キャッシュ最適化)
+/// アプリメイン・全フォルダ＆コース＆マイ単語帳一覧画面 (要件3.1完全適合, PERF-02 キャッシュ最適化)
 @available(iOS 17.0, macOS 14.0, *)
 public struct DeckListView: View {
     @Bindable public var store: DeckStore
@@ -10,11 +10,18 @@ public struct DeckListView: View {
     @State private var selectedCourseForDetail: Course? = nil
     @State private var selectedDeckForStudy: AnkiDeck? = nil
     
+    // 要件 3.1: ソート & ページネーション & アーカイブ表示切替ステート
+    @State private var sortOption: CourseSortOption = .nameAsc
+    @State private var showArchivedOnly: Bool = false
+    @State private var currentPage: Int = 1
+    private let pageSize: Int = 3
+    
     // モーダルシート管理
     @State private var isSettingsPresented: Bool = false
     @State private var isStatsPresented: Bool = false
     @State private var isCreateFolderPresented: Bool = false
     @State private var isCreateCoursePresented: Bool = false
+    @State private var courseToDelete: Course? = nil
     
     public init(store: DeckStore) {
         self.store = store
@@ -29,7 +36,7 @@ public struct DeckListView: View {
                 // 2. フォルダ切替チップフィルター (すべて / 各フォルダ)
                 folderChipsScrollView
                 
-                // 3. コース＆マイ単語帳一覧リスト
+                // 3. コース＆マイ単語帳一覧リスト (ソート・ページネーション・コンテキストメニュー対応)
                 courseAndDeckList
             }
             .background(backgroundColor.ignoresSafeArea())
@@ -79,6 +86,20 @@ public struct DeckListView: View {
                         }
                     )
                 }
+            }
+            .alert("コースの削除確認", isPresented: Binding(
+                get: { courseToDelete != nil },
+                set: { if !$0 { courseToDelete = nil } }
+            )) {
+                Button("キャンセル", role: .cancel) { courseToDelete = nil }
+                Button("削除する", role: .destructive) {
+                    if let c = courseToDelete {
+                        store.deleteCourse(c.id)
+                        courseToDelete = nil
+                    }
+                }
+            } message: {
+                Text("「\(courseToDelete?.title ?? "")」を削除してもよろしいですか？この操作は取り消せません。")
             }
             #if os(iOS)
             .fullScreenCover(item: $selectedDeckForStudy) { deck in
@@ -147,11 +168,13 @@ public struct DeckListView: View {
             HStack(spacing: 8) {
                 chipButton(title: "すべて", isSelected: selectedFolderId == nil) {
                     selectedFolderId = nil
+                    currentPage = 1
                 }
                 
                 ForEach(store.folders) { folder in
                     chipButton(title: folder.name, isSelected: selectedFolderId == folder.id) {
                         selectedFolderId = folder.id
+                        currentPage = 1
                     }
                 }
                 
@@ -181,40 +204,140 @@ public struct DeckListView: View {
         }
     }
     
+    // フィルタリング・ソート済みコース取得
+    private var filteredSortedCourses: [Course] {
+        var result = store.courses
+        
+        // フォルダ絞り込み
+        if let folderId = selectedFolderId {
+            result = result.filter { $0.folderId == folderId }
+        }
+        
+        // アーカイブ切替
+        result = result.filter { $0.isArchived == showArchivedOnly }
+        
+        // 要件 3.1: ソート処理
+        switch sortOption {
+        case .nameAsc:
+            result.sort { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        case .lastStudied:
+            result.sort { ($0.lastStudiedAt ?? Date.distantPast) > ($1.lastStudiedAt ?? Date.distantPast) }
+        case .updatedAt:
+            result.sort { $0.updatedAt > $1.updatedAt }
+        }
+        
+        return result
+    }
+    
+    // 要件 3.1: ページネーション切出コース
+    private var paginatedCourses: [Course] {
+        let all = filteredSortedCourses
+        let totalPages = max(1, Int(ceil(Double(all.count) / Double(pageSize))))
+        let validPage = min(max(1, currentPage), totalPages)
+        let startIndex = (validPage - 1) * pageSize
+        guard startIndex < all.count else { return [] }
+        let endIndex = min(startIndex + pageSize, all.count)
+        return Array(all[startIndex..<endIndex])
+    }
+    
+    private var totalPages: Int {
+        let count = filteredSortedCourses.count
+        return max(1, Int(ceil(Double(count) / Double(pageSize))))
+    }
+    
     // コース＆マイ単語帳一覧
     private var courseAndDeckList: some View {
         List {
             Section {
-                HStack {
-                    Text("コース一覧")
-                        .font(.title3)
-                        .fontWeight(.bold)
-                    Spacer()
-                    Button(action: { isCreateCoursePresented = true }) {
-                        Label("新規コース", systemImage: "plus.circle.fill")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
+                // 要件 3.1: コース一覧ヘッダー & ソート・アーカイブ切り替えコントローラー
+                VStack(spacing: 12) {
+                    HStack {
+                        Text("コース一覧")
+                            .font(.title3)
+                            .fontWeight(.bold)
+                        Spacer()
+                        Button(action: { isCreateCoursePresented = true }) {
+                            Label("新規コース", systemImage: "plus.circle.fill")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    
+                    HStack {
+                        // アクティブ / アーカイブ切替
+                        Picker("表示", selection: $showArchivedOnly) {
+                            Text("アクティブ").tag(false)
+                            Text("アーカイブ").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 180)
+                        
+                        Spacer()
+                        
+                        // 要件 3.1: ソートピッカー
+                        Picker("並び替え", selection: $sortOption) {
+                            ForEach(CourseSortOption.allCases) { option in
+                                Text(option.rawValue).tag(option)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .font(.caption)
                     }
                 }
                 .listRowBackground(Color.clear)
+                .padding(.bottom, 4)
                 
-                let filteredCourses = selectedFolderId == nil ? store.courses : store.courses.filter { $0.folderId == selectedFolderId }
+                let currentCourses = paginatedCourses
                 
-                if filteredCourses.isEmpty {
+                if currentCourses.isEmpty {
                     ContentUnavailableView(
-                        "コースが登録されていません",
-                        systemImage: "book.closed",
-                        description: Text("「新規コース」ボタンから新しいコースを作成してください。")
+                        showArchivedOnly ? "アーカイブ済みのコースはありません" : "コースが登録されていません",
+                        systemImage: showArchivedOnly ? "archivebox" : "book.closed",
+                        description: Text(showArchivedOnly ? "不要になったコースを長押しでアーカイブできます。" : "「新規コース」ボタンから新しいコースを作成してください。")
                     )
                     .listRowBackground(Color.clear)
                 } else {
-                    // PERF-01: LazyVStack 最適化
                     LazyVStack(spacing: 12) {
-                        ForEach(filteredCourses) { course in
+                        ForEach(currentCourses) { course in
                             courseCardRow(course)
                         }
                     }
                     .listRowBackground(Color.clear)
+                    
+                    // 要件 3.1: ページネーションコントロール (1ページ 3件)
+                    if totalPages > 1 {
+                        HStack {
+                            Spacer()
+                            Button(action: {
+                                if currentPage > 1 { currentPage -= 1 }
+                            }) {
+                                Image(systemName: "chevron.left")
+                                    .padding(8)
+                                    .background(Color.gray.opacity(0.15))
+                                    .clipShape(Circle())
+                            }
+                            .disabled(currentPage <= 1)
+                            
+                            Text("\(currentPage) / \(totalPages) ページ")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .padding(.horizontal, 12)
+                            
+                            Button(action: {
+                                if currentPage < totalPages { currentPage += 1 }
+                            }) {
+                                Image(systemName: "chevron.right")
+                                    .padding(8)
+                                    .background(Color.gray.opacity(0.15))
+                                    .clipShape(Circle())
+                            }
+                            .disabled(currentPage >= totalPages)
+                            Spacer()
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(Color.clear)
+                        .padding(.vertical, 8)
+                    }
                 }
             }
         }
@@ -257,6 +380,20 @@ public struct DeckListView: View {
             .cornerRadius(16)
         }
         .buttonStyle(.plain)
+        // 要件 3.1: コンテキストメニュー長押し (アーカイブ・復元・削除)
+        .contextMenu {
+            Button(action: {
+                store.toggleArchiveCourse(course.id)
+            }) {
+                Label(course.isArchived ? "アクティブに戻す" : "アーカイブに移動", systemImage: course.isArchived ? "tray.and.arrow.up" : "archivebox")
+            }
+            
+            Button(role: .destructive, action: {
+                courseToDelete = course
+            }) {
+                Label("コースを削除", systemImage: "trash")
+            }
+        }
     }
     
     private var backgroundColor: Color {

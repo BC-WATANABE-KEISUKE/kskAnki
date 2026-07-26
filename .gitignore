@@ -5,8 +5,12 @@ Thumbs.db
 # Swift Build & Package Manager
 .build/
 .swiftpm/
-*.xcodeproj
-*.xcworkspace
+
+# Xcode User State (プロジェクト本体は Git 管理)
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+DerivedData/
 
 # Node / Dependency directories (if applicable)
 node_modules/
