@@ -4,8 +4,12 @@ import ImageIO
 import UIKit
 #endif
 
-/// カードアタッチメント用ローカル画像永続化＆ロードサービス (UI-03 / UI-04 / SEC-03 / PERF-05 ダウンサンプリング最適化)
-public struct ImageStore: Sendable {
+/// カードアタッチメント用ローカル画像永続化＆ロードサービス (UI-03 / UI-04 / SEC-03 / PERF-05 ダウンサンプリング最適化 & NSCache)
+public final class ImageStore: Sendable {
+    
+    #if canImport(UIKit)
+    private static let imageCache = NSCache<NSString, UIImage>()
+    #endif
     
     private static var documentsDirectory: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
@@ -30,12 +34,24 @@ public struct ImageStore: Sendable {
     /// 相対パスまたはフルパスから画像データを読み込む
     #if canImport(UIKit)
     public static func loadImage(path: String) -> UIImage? {
+        let cacheKey = path as NSString
+        if let cached = imageCache.object(forKey: cacheKey) {
+            return cached
+        }
+        
         let fileURL = getURL(for: path)
-        return UIImage(contentsOfFile: fileURL.path)
+        guard let image = UIImage(contentsOfFile: fileURL.path) else { return nil }
+        imageCache.setObject(image, forKey: cacheKey)
+        return image
     }
     
-    /// PERF-05: 高解像度画像を直接メインメモリに解凍せず表示サイズへ低メモリデコードするダウンサンプリング API
+    /// PERF-05: 高解像度画像を直接メインメモリに解凍せず表示サイズへ低メモリデコード＆NSCache保持するダウンサンプリング API
     public static func loadDownsampledImage(path: String, pointSize: CGSize, scale: CGFloat = 2.0) -> UIImage? {
+        let cacheKey = "\(path)_\(pointSize.width)x\(pointSize.height)" as NSString
+        if let cached = imageCache.object(forKey: cacheKey) {
+            return cached
+        }
+        
         let fileURL = getURL(for: path)
         let imageSourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let imageSource = CGImageSourceCreateWithURL(fileURL as CFURL, imageSourceOptions) else {
@@ -54,7 +70,9 @@ public struct ImageStore: Sendable {
             return nil
         }
         
-        return UIImage(cgImage: downsampledImage)
+        let resultImage = UIImage(cgImage: downsampledImage)
+        imageCache.setObject(resultImage, forKey: cacheKey)
+        return resultImage
     }
     #endif
     

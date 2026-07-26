@@ -390,7 +390,7 @@ public struct FlashcardView: View {
             }
         } else {
             #if canImport(UIKit)
-            if let uiImage = ImageStore.loadImage(path: urlString) {
+            if let uiImage = ImageStore.loadDownsampledImage(path: urlString, pointSize: CGSize(width: 140, height: 100)) ?? ImageStore.loadImage(path: urlString) {
                 Image(uiImage: uiImage)
                     .resizable()
                     .aspectRatio(contentMode: .fill)

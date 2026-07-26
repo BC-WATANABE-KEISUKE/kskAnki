@@ -71,11 +71,14 @@ public final class DeckStore {
             .appendingPathComponent("kskAnki_store.json") ?? FileManager.default.temporaryDirectory.appendingPathComponent("kskAnki_store.json")
         self.persistenceWriter = PersistenceWriter(saveFileURL: defaultURL)
         
-        loadFromDisk()
-        if courses.isEmpty {
+        // NEW3-01: 「コース数0件」ではなく「保存ファイルが存在しない＝初回起動」でサンプルデータを投入
+        let didLoad = loadFromDisk()
+        if !didLoad {
             loadSampleData()
+            saveToDiskSync()
+        } else {
+            recalculateMetrics()
         }
-        recalculateMetrics()
     }
     
     // PERF-02: メトリクスの初期化・再計算処理 (起動・ロード・復元・一括処理用)
@@ -190,17 +193,16 @@ public final class DeckStore {
         saveToDisk()
     }
     
+    // NEW3-02: コース更新・削除時に無関係な recalculateMetrics() 全走査を排除
     public func updateCourse(_ updatedCourse: Course) {
         if let idx = courses.firstIndex(where: { $0.id == updatedCourse.id }) {
             courses[idx] = updatedCourse
-            recalculateMetrics()
             saveToDisk()
         }
     }
     
     public func deleteCourse(_ courseId: UUID) {
         courses.removeAll { $0.id == courseId }
-        recalculateMetrics()
         saveToDisk()
     }
     
@@ -231,7 +233,6 @@ public final class DeckStore {
             }
         }
         
-        recalculateMetrics()
         saveToDisk()
     }
     
