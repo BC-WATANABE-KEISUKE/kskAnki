@@ -63,13 +63,17 @@ public final class DeckStore {
     // NEW2-03: O(1) 差分更新用 Set キャッシュ
     private var studyDaysCache: Set<Date> = []
     
+    private let customStorageURL: URL?
+    
     // NEW2-02: 直列化保存アクター
     private let persistenceWriter: PersistenceWriter
     
-    public init() {
-        let defaultURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("kskAnki_store.json") ?? FileManager.default.temporaryDirectory.appendingPathComponent("kskAnki_store.json")
-        self.persistenceWriter = PersistenceWriter(saveFileURL: defaultURL)
+    // NEW-14: 依存性注入イニシャライザ (テストで一時ディレクトリを指定し実 Documents 汚染を回避)
+    public init(storageURL: URL? = nil) {
+        self.customStorageURL = storageURL
+        let targetURL = storageURL ?? (FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("kskAnki_store.json") ?? FileManager.default.temporaryDirectory.appendingPathComponent("kskAnki_store.json"))
+        self.persistenceWriter = PersistenceWriter(saveFileURL: targetURL)
         
         // NEW3-01: 「コース数0件」ではなく「保存ファイルが存在しない＝初回起動」でサンプルデータを投入
         let didLoad = loadFromDisk()
@@ -110,6 +114,9 @@ public final class DeckStore {
     }
     
     private var saveFileURL: URL {
+        if let custom = customStorageURL {
+            return custom
+        }
         let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
         let docDir = paths.first ?? FileManager.default.temporaryDirectory
         return docDir.appendingPathComponent("kskAnki_store.json")

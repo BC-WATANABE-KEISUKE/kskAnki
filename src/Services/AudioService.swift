@@ -53,9 +53,14 @@ public final class AudioService: NSObject, AVSpeechSynthesizerDelegate, Sendable
         #endif
     }
     
-    /// 音声URL / ファイルを再生する
+    /// 音声URL / ファイルを再生する (SEC-02: URLスキーム安全検証)
     public func playAudio(urlString: String) {
-        guard let url = URL(string: urlString) else { return }
+        guard let url = URL(string: urlString),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https", "file"].contains(scheme) else {
+            print("Security warning: Invalid or unallowed audio URL scheme")
+            return
+        }
         player = AVPlayer(url: url)
         player?.play()
     }

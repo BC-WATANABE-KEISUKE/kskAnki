@@ -349,7 +349,11 @@ public struct DeckListView: View {
             selectedCourseForDetail = course
         }) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
+                let themeColor = Color(hex: course.themeColorHex)
+                
+                HStack(spacing: 8) {
+                    Image(systemName: course.iconName)
+                        .foregroundColor(themeColor)
                     Text(course.title)
                         .font(.headline)
                         .fontWeight(.bold)
@@ -373,10 +377,14 @@ public struct DeckListView: View {
                     Label("\(course.decks.count) デッキ", systemImage: "folder")
                 }
                 .font(.caption)
-                .foregroundColor(.blue)
+                .foregroundColor(themeColor)
             }
             .padding(16)
             .background(cardBgColor)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color(hex: course.themeColorHex).opacity(0.3), lineWidth: 1)
+            )
             .cornerRadius(16)
         }
         .buttonStyle(.plain)

@@ -1,11 +1,14 @@
 import Foundation
 @testable import kskAnkiCore
 
-/// DeckStore 永続化 & データツリー構造 & 動的ストリーク計算の自動検証クラス
+/// DeckStore 永続化 & データツリー構造 & 動的ストリーク計算の自動検証クラス (NEW-14: 隔離テスト領域を使用)
 @MainActor
 public struct DeckStoreVerifier {
     public static func verifyPersistenceAndTree() {
-        let store = DeckStore()
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("test_store_\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        
+        let store = DeckStore(storageURL: tempURL)
         
         assert(store.allDecks.count >= 0, "サンプルコースからデッキが取得できること")
         
@@ -29,7 +32,7 @@ public struct DeckStoreVerifier {
         let saveSuccess = store.saveToDisk(sync: true)
         assert(saveSuccess, "Diskへの保存が成功すること")
         
-        let newStore = DeckStore()
+        let newStore = DeckStore(storageURL: tempURL)
         assert(newStore.courses.contains(where: { $0.id == testCourse.id }), "Diskからの再ロードで追加コースが維持されること")
         
         newStore.deleteCourse(testCourse.id)

@@ -44,8 +44,8 @@ public struct CardStudyView: View {
                 } else if currentIndex < dueCards.count {
                     let currentCard = dueCards[currentIndex]
                     
-                    // 進捗プログレスバー
-                    progressHeader(current: currentIndex + 1, total: dueCards.count)
+                    // 進捗プログレスバー (UX-09: 1枚目表示時は 0 / N から正調スタート)
+                    progressHeader(current: currentIndex, total: dueCards.count)
                     
                     ZStack {
                         ScrollView {
@@ -187,7 +187,7 @@ public struct CardStudyView: View {
                 .tint(.blue)
                 .padding(.horizontal, 24)
             
-            Text("\(current) / \(total) カード")
+            Text("カード \(current + 1) / \(total)")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }

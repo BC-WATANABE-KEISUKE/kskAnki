@@ -126,10 +126,12 @@ public struct FlashcardView: View {
                             .accessibilityLabel("解答の音声を再生")
                         }
                         
-                        // 解答メインテキスト
-                        Text(card.backText)
-                            .font(.system(.title3, design: .rounded).weight(.bold))
-                            .foregroundColor(.primary)
+                        // 解答メインテキスト (NEW-13: backText が空でない場合のみ表示)
+                        if !card.backText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text(card.backText)
+                                .font(.system(.title3, design: .rounded).weight(.bold))
+                                .foregroundColor(.primary)
+                        }
                         
                         // 日本語訳 / 和訳
                         if !card.japaneseTranslation.isEmpty {
@@ -256,6 +258,7 @@ public struct FlashcardView: View {
         .onChange(of: card.id) {
             noteText = card.userNotes
             showHint = false
+            isEditingNotes = false
         }
     }
     
