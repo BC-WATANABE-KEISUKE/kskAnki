@@ -5,8 +5,13 @@ import SwiftUI
 public struct DeckListView: View {
     @Bindable public var store: DeckStore
     
-    // UI状態管理
-    @State private var selectedFolderId: UUID? = nil
+    public enum FolderSelection: Hashable {
+        case all
+        case unfiled
+        case folder(UUID)
+    }
+    
+    @State private var folderSelection: FolderSelection = .all
     @State private var selectedCourseForDetail: Course? = nil
     @State private var selectedDeckForStudy: AnkiDeck? = nil
     
@@ -65,7 +70,7 @@ public struct DeckListView: View {
             .sheet(isPresented: $isCreateFolderPresented) {
                 CreateFolderView { newFolder in
                     store.addFolder(newFolder)
-                    selectedFolderId = newFolder.id
+                    folderSelection = .folder(newFolder.id)
                 }
             }
             .sheet(isPresented: $isCreateCoursePresented) {
@@ -166,14 +171,19 @@ public struct DeckListView: View {
     private var folderChipsScrollView: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                chipButton(title: "すべて", isSelected: selectedFolderId == nil) {
-                    selectedFolderId = nil
+                chipButton(title: "すべて", isSelected: folderSelection == .all) {
+                    folderSelection = .all
+                    currentPage = 1
+                }
+                
+                chipButton(title: "未分類", isSelected: folderSelection == .unfiled) {
+                    folderSelection = .unfiled
                     currentPage = 1
                 }
                 
                 ForEach(store.folders) { folder in
-                    chipButton(title: folder.name, isSelected: selectedFolderId == folder.id) {
-                        selectedFolderId = folder.id
+                    chipButton(title: folder.name, isSelected: folderSelection == .folder(folder.id)) {
+                        folderSelection = .folder(folder.id)
                         currentPage = 1
                     }
                 }
@@ -208,9 +218,14 @@ public struct DeckListView: View {
     private var filteredSortedCourses: [Course] {
         var result = store.courses
         
-        // フォルダ絞り込み
-        if let folderId = selectedFolderId {
-            result = result.filter { $0.folderId == folderId }
+        // フォルダ絞り込み (UX-12: 未分類 folderId == nil フィルタリング適合)
+        switch folderSelection {
+        case .all:
+            break
+        case .unfiled:
+            result = result.filter { $0.folderId == nil }
+        case .folder(let id):
+            result = result.filter { $0.folderId == id }
         }
         
         // アーカイブ切替
@@ -404,21 +419,8 @@ public struct DeckListView: View {
         }
     }
     
-    private var backgroundColor: Color {
-        #if canImport(UIKit)
-        return Color(uiColor: .systemGroupedBackground)
-        #else
-        return Color.gray.opacity(0.06)
-        #endif
-    }
-    
-    private var cardBgColor: Color {
-        #if canImport(UIKit)
-        return Color(uiColor: .secondarySystemGroupedBackground)
-        #else
-        return Color.white
-        #endif
-    }
+    private var backgroundColor: Color { .appBackground }
+    private var cardBgColor: Color { .cardBackground }
 }
 
 // Xcode SwiftUI Canvas プレビュー定義 (Xcode 内でのリアルタイム表示用)

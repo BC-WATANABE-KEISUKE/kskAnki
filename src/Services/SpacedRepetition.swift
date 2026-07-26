@@ -26,12 +26,12 @@ public struct SpacedRepetitionScheduler: Sendable {
             updatedCard.intervalDays = 0
             updatedCard.wrongCount += 1
             updatedCard.consecutiveCorrectCount = 0 // 連続正解リセット
-            updatedCard.easeFactor = max(1.3, updatedCard.easeFactor - 0.2)
+            updatedCard.easeFactor = max(SRSParameters.minEaseFactor, updatedCard.easeFactor - 0.2)
             
         case .doubtful: // △ 惜しい (SRS-03: 復習間隔を伸ばさず半減短縮する)
             updatedCard.doubtfulCount += 1
             updatedCard.consecutiveCorrectCount = 0 // 連続正解リセット
-            updatedCard.easeFactor = max(1.3, updatedCard.easeFactor - 0.1)
+            updatedCard.easeFactor = max(SRSParameters.minEaseFactor, updatedCard.easeFactor - 0.1)
             if updatedCard.reps == 0 {
                 updatedCard.intervalDays = 1
             } else {
@@ -44,7 +44,7 @@ public struct SpacedRepetitionScheduler: Sendable {
                 updatedCard.consecutiveCorrectCount += 1 // SRS-05: 日を跨いだ正解のみカウント
             }
             // SRS-02: easeFactor に上限 2.5 を適用
-            updatedCard.easeFactor = min(2.5, updatedCard.easeFactor + 0.05)
+            updatedCard.easeFactor = min(SRSParameters.defaultEaseFactor, updatedCard.easeFactor + 0.05)
             if updatedCard.reps == 1 {
                 updatedCard.intervalDays = 1
             } else if updatedCard.reps == 2 {
@@ -55,7 +55,7 @@ public struct SpacedRepetitionScheduler: Sendable {
         }
         
         // SRS-02: intervalDays に上限 365 日を設定
-        updatedCard.intervalDays = min(365, updatedCard.intervalDays)
+        updatedCard.intervalDays = min(SRSParameters.maxIntervalDays, updatedCard.intervalDays)
         
         // SRS-06: Calendar API で次回学習日を計算
         updatedCard.dueDate = Calendar.current.date(byAdding: .day, value: updatedCard.intervalDays, to: currentDate) ?? currentDate

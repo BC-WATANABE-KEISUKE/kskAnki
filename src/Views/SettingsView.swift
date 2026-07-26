@@ -83,19 +83,9 @@ public struct SettingsView: View {
                 // 3. データバックアップ & 復元 (NEW-07: インポート UI の追加)
                 if let store = store {
                     Section {
-                        Button(action: {
-                            if let json = BackupService.exportBackupJSON(store: store) {
-                                backupJSONText = json
-                                #if canImport(UIKit)
-                                UIPasteboard.general.string = json
-                                #endif
-                                feedbackMessage = "全データのJSONバックアップをクリップボードにコピーしました！"
-                                isExportSheetPresented = true
-                            }
-                        }) {
-                            HStack {
-                                Image(systemName: "square.and.arrow.up")
-                                Text("JSON バックアップを出力・コピー")
+                        if let json = BackupService.exportBackupJSON(store: store) {
+                            ShareLink(item: json, preview: SharePreview("kskAnki JSON バックアップ", image: Image(systemName: "doc.text"))) {
+                                Label("JSON バックアップを出力・共有", systemImage: "square.and.arrow.up")
                             }
                         }
                         
@@ -173,13 +163,13 @@ public struct SettingsView: View {
                                 .foregroundColor(.secondary)
                             Spacer()
                             #if canImport(UIKit)
-                            Button("📋 クリップボードから読み込み") {
-                                if let str = UIPasteboard.general.string {
+                            PasteButton(payloadType: String.self) { strings in
+                                if let str = strings.first {
                                     restoreInputJSON = str
                                 }
                             }
+                            .labelStyle(.titleAndIcon)
                             .font(.caption)
-                            .foregroundColor(.blue)
                             #endif
                         }
                         

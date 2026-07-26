@@ -143,11 +143,11 @@ public final class DeckStore {
         }
     }
     
-    /// 非同期スケジュール保存 (PersistenceWriter アクターによる直列化)
-    @discardableResult
-    public func saveToDisk(sync: Bool = false) -> Bool {
+    /// 非同期スケジュール保存 (PersistenceWriter アクターによる直列化) (NEW2-05: 戻り値を Void にし型役割を正確化)
+    public func saveToDisk(sync: Bool = false) {
         if sync {
-            return saveToDiskSync()
+            _ = saveToDiskSync()
+            return
         }
         let snapshot = DeckStoreSnapshot(
             folders: folders,
@@ -159,7 +159,6 @@ public final class DeckStore {
         Task {
             await writer.write(snapshot)
         }
-        return true
     }
     
     @discardableResult
@@ -243,10 +242,15 @@ public final class DeckStore {
         saveToDisk()
     }
     
-    // --- 学習ログ記録 & 一元管理 (NEW2-03: 真の O(1) 差分更新で 39ms 全走査フリーズを完治) ---
+    // --- 学習ログ記録 & 一元管理 (NEW2-03: 真の O(1) 差分更新, NEW-17: ログ件数上限トリミング) ---
     public func recordStudy(cardId: UUID, rating: Rating, at date: Date = Date()) {
         let log = StudyLog(cardId: cardId, rating: rating, studiedAt: date)
         studyLogs.append(log)
+        
+        // NEW-17: ログ件数が上限 (10,000件) を超えた場合は古いログをトリミング
+        if studyLogs.count > SRSParameters.maxStudyLogsCapacity {
+            studyLogs.removeFirst(studyLogs.count - SRSParameters.maxStudyLogsCapacity)
+        }
         
         let calendar = Calendar.current
         if calendar.isDateInToday(date) {
@@ -261,11 +265,9 @@ public final class DeckStore {
         saveToDisk()
     }
     
-    // 全登録カード数の取得
+    // PERF-06: 全登録カード数の取得 (lazy カウント最適化による配列コピー排除)
     public var allCardsCount: Int {
-        courses.reduce(0) { sum, course in
-            sum + course.decks.reduce(0) { dSum, deck in dSum + deck.cards.count }
-        }
+        courses.lazy.flatMap { $0.decks.lazy.flatMap { $0.cards } }.count
     }
     
     // 全デッキ一覧の取得

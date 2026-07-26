@@ -457,21 +457,8 @@ public struct FlashcardView: View {
         }
     }
     
-    private var frontBgColor: Color {
-        #if canImport(UIKit)
-        return Color(uiColor: .tertiarySystemGroupedBackground)
-        #else
-        return Color.gray.opacity(0.08)
-        #endif
-    }
-    
-    private var cardBgColor: Color {
-        #if canImport(UIKit)
-        return Color(uiColor: .secondarySystemGroupedBackground)
-        #else
-        return Color.gray.opacity(0.12)
-        #endif
-    }
+    private var frontBgColor: Color { .frontCardBackground }
+    private var cardBgColor: Color { .cardBackground }
     
     private func playFrontSpeech() {
         AudioService.shared.speak(text: card.frontText, language: card.speechLanguage)

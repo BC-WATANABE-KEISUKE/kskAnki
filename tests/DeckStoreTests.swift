@@ -29,7 +29,7 @@ public struct DeckStoreVerifier {
         assert(store.todayStudiedCardsCount == 1, "本日の学習枚数がログから正確に計算されること")
         assert(store.streakDaysCount == 2, "連続学習日数が2日と算出されること")
         
-        let saveSuccess = store.saveToDisk(sync: true)
+        let saveSuccess = store.saveToDiskSync()
         assert(saveSuccess, "Diskへの保存が成功すること")
         
         let newStore = DeckStore(storageURL: tempURL)

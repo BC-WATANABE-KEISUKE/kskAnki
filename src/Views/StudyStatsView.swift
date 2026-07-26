@@ -243,19 +243,6 @@ public struct StudyStatsView: View {
         }
     }
     
-    private var backgroundColor: Color {
-        #if canImport(UIKit)
-        return Color(uiColor: .systemGroupedBackground)
-        #else
-        return Color.gray.opacity(0.06)
-        #endif
-    }
-    
-    private var cardBgColor: Color {
-        #if canImport(UIKit)
-        return Color(uiColor: .secondarySystemGroupedBackground)
-        #else
-        return Color.white
-        #endif
-    }
+    private var backgroundColor: Color { .appBackground }
+    private var cardBgColor: Color { .cardBackground }
 }

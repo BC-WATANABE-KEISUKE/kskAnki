@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// アプリ全体のテーマ＆カラーヘルパー (UX-14: themeColorHex 反映 & RFC-08: カラー共通定義)
+/// アプリ全体のテーマ＆カラーヘルパー (UX-14: themeColorHex 反映 & RFC-08: カラー共通定義一元化)
 public extension Color {
     init(hex: String) {
         let hexCleaned = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
@@ -26,5 +26,30 @@ public extension Color {
             blue: Double(b) / 255,
             opacity: Double(a) / 255
         )
+    }
+    
+    // RFC-08: 背景色・カード背景色の共通色定義 (重復コード排除)
+    static var appBackground: Color {
+        #if canImport(UIKit)
+        return Color(uiColor: .systemGroupedBackground)
+        #else
+        return Color.gray.opacity(0.05)
+        #endif
+    }
+    
+    static var cardBackground: Color {
+        #if canImport(UIKit)
+        return Color(uiColor: .secondarySystemGroupedBackground)
+        #else
+        return Color.gray.opacity(0.12)
+        #endif
+    }
+    
+    static var frontCardBackground: Color {
+        #if canImport(UIKit)
+        return Color(uiColor: .tertiarySystemGroupedBackground)
+        #else
+        return Color.gray.opacity(0.08)
+        #endif
     }
 }
